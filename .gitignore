@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Personal vocabulary sources and study progress
+data/*.csv
+data/*.db
+data/*.db-*
+
+# Keep the public example vocabulary file
+!data/example_vocab.csv
