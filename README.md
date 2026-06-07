@@ -1,8 +1,8 @@
 # GRE Vocab Daily
 
 A local-first GRE vocabulary study app built with Python, Streamlit, and SQLite.
-It supports new-word study, spaced repetition, red-word tracking, daily progress,
-search and editing, and CSV exports.
+It supports new-word study, spaced repetition, difficult-word tracking, daily
+progress, pronunciation, search and editing, and CSV exports.
 
 Each user runs the app locally. There is no login, cloud backend, or public sharing
 of study records.
@@ -10,11 +10,16 @@ of study records.
 ## Features
 
 - Study unseen words by vocabulary list
+- Hear each word with local UK or US browser pronunciation
 - Review due words with level-based spaced repetition
 - Automatically identify difficult words from learning performance
 - Track daily activity and accuracy
 - Search, edit, and delete vocabulary entries
 - Export words, difficult words, study logs, and a complete database backup
+
+Pronunciation uses the browser's built-in speech synthesis. It does not require an
+audio API or uploaded recordings; voice quality depends on the voices installed on
+the user's device.
 
 ## Install And Run
 

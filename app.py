@@ -1,9 +1,11 @@
 import csv
 import io
+import json
 from datetime import date
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 import db
 from importer import import_csv
@@ -40,6 +42,54 @@ def csv_bytes(items):
     return output.getvalue().encode("utf-8-sig")
 
 
+def pronunciation_buttons(word):
+    safe_word = json.dumps(word)
+    components.html(
+        f"""
+        <style>
+          body {{
+            margin: 0;
+            color: #31333f;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+          }}
+          .controls {{ display: flex; justify-content: center; gap: 10px; }}
+          button {{
+            border: 1px solid rgba(128, 128, 128, .45);
+            border-radius: 8px;
+            background: transparent;
+            color: inherit;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 8px 16px;
+          }}
+          button:hover {{ border-color: #ff4b4b; color: #ff4b4b; }}
+          @media (prefers-color-scheme: dark) {{
+            body {{ color: #fafafa; }}
+            button {{ border-color: rgba(250, 250, 250, .35); }}
+          }}
+        </style>
+        <div class="controls">
+          <button onclick="speak('en-GB')">UK pronunciation</button>
+          <button onclick="speak('en-US')">US pronunciation</button>
+        </div>
+        <script>
+          function speak(lang) {{
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance({safe_word});
+            utterance.lang = lang;
+            utterance.rate = 0.82;
+            const voices = window.speechSynthesis.getVoices();
+            const matchingVoice = voices.find(v => v.lang === lang)
+              || voices.find(v => v.lang.startsWith(lang.slice(0, 2)));
+            if (matchingVoice) utterance.voice = matchingVoice;
+            window.speechSynthesis.speak(utterance);
+          }}
+        </script>
+        """,
+        height=48,
+    )
+
+
 def show_word_card(word, include_notes=False):
     if st.session_state.get("answer_word_id") != word["id"]:
         st.session_state.answer_shown = False
@@ -49,6 +99,7 @@ def show_word_card(word, include_notes=False):
         f'<div class="phonetic">{word["phonetic"] or ""}</div></div>',
         unsafe_allow_html=True,
     )
+    pronunciation_buttons(word["word"])
     if st.session_state.get("answer_shown", False):
         parts = [f"**Meaning:** {word['meaning'] or '—'}"]
         if word["equivalents"]:
