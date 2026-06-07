@@ -60,8 +60,27 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_words_due ON words(next_review_date);
             CREATE INDEX IF NOT EXISTS idx_words_list ON words(list_name);
             CREATE INDEX IF NOT EXISTS idx_words_level ON words(level);
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """
         )
+        existing = {item["name"] for item in conn.execute("PRAGMA table_info(words)").fetchall()}
+        migrations = {
+            "review_count": "ALTER TABLE words ADD COLUMN review_count INTEGER NOT NULL DEFAULT 0",
+            "consecutive_correct": "ALTER TABLE words ADD COLUMN consecutive_correct INTEGER NOT NULL DEFAULT 0",
+            "first_studied": "ALTER TABLE words ADD COLUMN first_studied TEXT",
+            "starred": "ALTER TABLE words ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, statement in migrations.items():
+            if column not in existing:
+                conn.execute(statement)
+        conn.execute("UPDATE words SET starred = 1 WHERE is_red_word = 1 AND starred = 0")
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('exam_date', '2026-09-15')")
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('daily_unit_goal', '1')")
+        conn.execute("INSERT OR IGNORE INTO settings VALUES ('backlog_threshold', '250')")
 
 
 def rows(query, params=()):
@@ -84,8 +103,26 @@ def list_names():
     return [item["list_name"] for item in rows("SELECT DISTINCT list_name FROM words ORDER BY list_name")]
 
 
-def is_red_clause():
-    return "(is_red_word = 1 OR times_wrong >= 2 OR (level <= 1 AND times_reviewed >= 2))"
+def difficult_clause():
+    return """(
+        times_reviewed > 0 AND (
+            times_wrong >= 2
+            OR (review_count >= 3 AND 1.0 * times_wrong / review_count >= 0.30)
+            OR (review_count >= 3 AND level <= 1)
+        )
+    )"""
+
+
+def setting(key, default=""):
+    item = row("SELECT value FROM settings WHERE key = ?", (key,))
+    return item["value"] if item else default
+
+
+def save_setting(key, value):
+    execute(
+        "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, str(value)),
+    )
 
 
 def record_activity(kind: str, rating: str):
@@ -131,16 +168,19 @@ def apply_rating(word_id: int, kind: str, rating: str):
     execute(
         """
         UPDATE words SET level = ?, next_review_date = ?, times_reviewed = times_reviewed + 1,
-            times_wrong = times_wrong + ?, last_reviewed = ?,
-            is_red_word = CASE WHEN ? THEN 1 ELSE is_red_word END
+            review_count = review_count + ?, times_wrong = times_wrong + ?, last_reviewed = ?,
+            first_studied = COALESCE(first_studied, ?),
+            consecutive_correct = CASE WHEN ? THEN consecutive_correct + 1 ELSE 0 END
         WHERE id = ?
         """,
         (
             result["level"],
             result["next_review_date"],
+            int(kind == "review"),
             result["wrong_increment"],
             date.today().isoformat(),
-            result["mark_red"],
+            date.today().isoformat(),
+            result["correct"],
             word_id,
         ),
     )
@@ -152,12 +192,17 @@ def dashboard_stats():
     stats = row(
         f"""
         SELECT COUNT(*) total_words,
-            SUM(CASE WHEN next_review_date <= ? THEN 1 ELSE 0 END) due_today,
-            SUM(CASE WHEN {is_red_clause()} THEN 1 ELSE 0 END) red_words,
-            SUM(CASE WHEN level >= 4 THEN 1 ELSE 0 END) mastered_words
+            SUM(CASE WHEN times_reviewed = 0 THEN 1 ELSE 0 END) unseen_words,
+            SUM(CASE WHEN times_reviewed > 0 AND level <= 1 THEN 1 ELSE 0 END) learning_words,
+            SUM(CASE WHEN times_reviewed > 0 AND level BETWEEN 2 AND 5 THEN 1 ELSE 0 END) reviewing_words,
+            SUM(CASE WHEN times_reviewed > 0 AND next_review_date <= ? THEN 1 ELSE 0 END) due_today,
+            SUM(CASE WHEN times_reviewed > 0 AND next_review_date < ? THEN 1 ELSE 0 END) overdue_words,
+            SUM(CASE WHEN {difficult_clause()} THEN 1 ELSE 0 END) difficult_words,
+            SUM(CASE WHEN starred = 1 THEN 1 ELSE 0 END) starred_words,
+            SUM(CASE WHEN level >= 6 THEN 1 ELSE 0 END) mastered_words
         FROM words
         """,
-        (today,),
+        (today, today),
     )
     log = row("SELECT * FROM daily_log WHERE date = ?", (today,)) or {}
     return {**stats, **log}
@@ -168,7 +213,7 @@ def progress_by_list():
         """
         SELECT list_name, COUNT(*) total_words,
             SUM(CASE WHEN times_reviewed > 0 THEN 1 ELSE 0 END) studied_words,
-            SUM(CASE WHEN level >= 4 THEN 1 ELSE 0 END) mastered_words,
+            SUM(CASE WHEN level >= 6 THEN 1 ELSE 0 END) mastered_words,
             ROUND(100.0 * SUM(CASE WHEN times_reviewed > 0 THEN 1 ELSE 0 END) / COUNT(*), 1) progress_pct
         FROM words GROUP BY list_name ORDER BY list_name
         """

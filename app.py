@@ -7,6 +7,7 @@ import streamlit as st
 
 import db
 from importer import import_csv
+from scheduler import status_for
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -80,17 +81,39 @@ def dashboard_page():
     st.caption(f"Today: {date.today().isoformat()}")
     stats = db.dashboard_stats()
     metrics = [
-        ("Total words", stats.get("total_words", 0)),
+        ("Unseen", stats.get("unseen_words", 0)),
         ("Due today", stats.get("due_today", 0)),
+        ("Overdue", stats.get("overdue_words", 0)),
+        ("Learning", stats.get("learning_words", 0)),
+        ("Reviewing", stats.get("reviewing_words", 0)),
+        ("Mastered", stats.get("mastered_words", 0)),
         ("New studied today", stats.get("new_words_studied", 0)),
         ("Reviews today", stats.get("review_words_completed", 0)),
         ("Accuracy today", f"{stats.get('accuracy', 0)}%"),
-        ("Red words", stats.get("red_words", 0)),
-        ("Mastered (level ≥ 4)", stats.get("mastered_words", 0)),
+        ("Difficult words", stats.get("difficult_words", 0)),
     ]
     cols = st.columns(4)
     for index, (label, value) in enumerate(metrics):
         cols[index % 4].metric(label, value or 0)
+
+    threshold = int(db.setting("backlog_threshold", "250"))
+    if stats.get("due_today", 0) > threshold:
+        st.warning(
+            f"You have more than {threshold} reviews due. Finish reviews first and consider "
+            "studying half a unit today."
+        )
+    else:
+        st.info("Recommended order: complete due reviews first, then study today's new unit.")
+
+    exam_date = date.fromisoformat(db.setting("exam_date", "2026-09-15"))
+    days_to_exam = (exam_date - date.today()).days
+    unfinished_lists = db.row(
+        "SELECT COUNT(DISTINCT list_name) count FROM words WHERE times_reviewed = 0"
+    )["count"]
+    st.caption(
+        f"Target exam: {exam_date.isoformat()} ({days_to_exam} days away) · "
+        f"{unfinished_lists} lists still contain unseen words"
+    )
 
     st.subheader("Progress by list")
     progress = db.progress_by_list()
@@ -151,10 +174,17 @@ def new_words_page():
 def review_page():
     st.title("Review Due Words")
     today = date.today().isoformat()
-    due = db.row("SELECT COUNT(*) count FROM words WHERE next_review_date <= ?", (today,))["count"]
+    due = db.row(
+        "SELECT COUNT(*) count FROM words WHERE times_reviewed > 0 AND next_review_date <= ?",
+        (today,),
+    )["count"]
     st.caption(f"{due} words due")
     word = db.row(
-        "SELECT * FROM words WHERE next_review_date <= ? ORDER BY next_review_date, times_reviewed DESC, id LIMIT 1",
+        """
+        SELECT * FROM words
+        WHERE times_reviewed > 0 AND next_review_date <= ?
+        ORDER BY next_review_date, level, times_wrong DESC, id LIMIT 1
+        """,
         (today,),
     )
     if not word:
@@ -168,13 +198,23 @@ def review_page():
         )
 
 
-def red_words_page():
-    st.title("Red Words")
+def difficult_words_page():
+    st.title("Difficult & Starred Words")
+    st.write(
+        "Difficult words are detected automatically from repeated mistakes, low accuracy, "
+        "or remaining in early learning stages. Starred words are your manual collection."
+    )
     names = ["All lists"] + db.list_names()
-    left, right = st.columns(2)
-    selected = left.selectbox("List", names, key="red_list")
-    search = right.text_input("Search word or meaning", key="red_search")
-    conditions = [db.is_red_clause()]
+    left, middle, right = st.columns(3)
+    selected = left.selectbox("List", names, key="difficult_list")
+    mode = middle.selectbox("Show", ["Difficult words", "Starred words", "Both"])
+    search = right.text_input("Search word or meaning", key="difficult_search")
+    if mode == "Difficult words":
+        conditions = [db.difficult_clause()]
+    elif mode == "Starred words":
+        conditions = ["starred = 1"]
+    else:
+        conditions = [f"({db.difficult_clause()} OR starred = 1)"]
     params = []
     if selected != "All lists":
         conditions.append("list_name = ?")
@@ -183,32 +223,36 @@ def red_words_page():
         conditions.append("(word LIKE ? OR meaning LIKE ?)")
         params.extend([f"%{search}%", f"%{search}%"])
     where = " AND ".join(conditions)
-    red_words = db.rows(f"SELECT * FROM words WHERE {where} ORDER BY times_wrong DESC, word", params)
-    st.caption(f"{len(red_words)} red words match the current filters")
-    st.download_button(
-        "Export filtered red words CSV",
-        csv_bytes(red_words),
-        "red_words.csv",
-        "text/csv",
-        disabled=not red_words,
+    difficult_words = db.rows(
+        f"SELECT * FROM words WHERE {where} ORDER BY times_wrong DESC, level, word",
+        params,
     )
-    if not red_words:
-        st.info("No red words match.")
+    st.caption(f"{len(difficult_words)} words match the current filters")
+    st.download_button(
+        "Export filtered words CSV",
+        csv_bytes(difficult_words),
+        "difficult_words.csv",
+        "text/csv",
+        disabled=not difficult_words,
+    )
+    if not difficult_words:
+        st.info("No words match.")
         return
 
     selected_id = st.selectbox(
-        "Choose a red word to review",
-        [item["id"] for item in red_words],
+        "Choose a word to review",
+        [item["id"] for item in difficult_words],
         format_func=lambda word_id: next(
-            f"{item['word']} · L{item['level']} · wrong {item['times_wrong']}"
-            for item in red_words
+            f"{item['word']} · {status_for(item['level'], item['times_reviewed'])} "
+            f"stage {item['level']} · wrong {item['times_wrong']}"
+            for item in difficult_words
             if item["id"] == word_id
         ),
     )
-    word = next(item for item in red_words if item["id"] == selected_id)
-    if st.button("Remove manual red mark"):
-        db.execute("UPDATE words SET is_red_word = 0 WHERE id = ?", (word["id"],))
-        st.success("Manual red mark removed. Rule-based red status may still apply.")
+    word = next(item for item in difficult_words if item["id"] == selected_id)
+    star_label = "Remove star" if word["starred"] else "Add star"
+    if st.button(star_label):
+        db.execute("UPDATE words SET starred = ? WHERE id = ?", (int(not word["starred"]), word["id"]))
         st.rerun()
     if show_word_card(word, include_notes=True):
         rate_buttons(
@@ -225,9 +269,10 @@ def search_edit_page():
     search_word = c1.text_input("English word")
     search_meaning = c2.text_input("Chinese meaning")
     selected_list = c3.selectbox("List", names)
-    c4, c5 = st.columns(2)
-    selected_level = c4.selectbox("Level", ["All", 0, 1, 2, 3, 4, 5])
-    red_only = c5.checkbox("Red words only")
+    c4, c5, c6 = st.columns(3)
+    selected_status = c4.selectbox("Status", ["All", "Unseen", "Learning", "Reviewing", "Mastered"])
+    difficult_only = c5.checkbox("Difficult words only")
+    starred_only = c6.checkbox("Starred words only")
 
     conditions, params = ["1 = 1"], []
     if search_word:
@@ -239,11 +284,18 @@ def search_edit_page():
     if selected_list != "All lists":
         conditions.append("list_name = ?")
         params.append(selected_list)
-    if selected_level != "All":
-        conditions.append("level = ?")
-        params.append(selected_level)
-    if red_only:
-        conditions.append(db.is_red_clause())
+    status_conditions = {
+        "Unseen": "times_reviewed = 0",
+        "Learning": "times_reviewed > 0 AND level <= 1",
+        "Reviewing": "times_reviewed > 0 AND level BETWEEN 2 AND 5",
+        "Mastered": "level >= 6",
+    }
+    if selected_status != "All":
+        conditions.append(status_conditions[selected_status])
+    if difficult_only:
+        conditions.append(db.difficult_clause())
+    if starred_only:
+        conditions.append("starred = 1")
     results = db.rows(
         f"SELECT * FROM words WHERE {' AND '.join(conditions)} ORDER BY word LIMIT 500",
         params,
@@ -255,7 +307,8 @@ def search_edit_page():
         "Select entry",
         [item["id"] for item in results],
         format_func=lambda word_id: next(
-            f"{item['word']} · {item['list_name']} · L{item['level']}"
+            f"{item['word']} · {item['list_name']} · "
+            f"{status_for(item['level'], item['times_reviewed'])} stage {item['level']}"
             for item in results
             if item["id"] == word_id
         ),
@@ -267,14 +320,14 @@ def search_edit_page():
         equivalents = st.text_area("Equivalents", item["equivalents"])
         example = st.text_area("Example", item["example"])
         notes = st.text_area("Notes", item["notes"])
-        is_red = st.checkbox("Manual red mark", bool(item["is_red_word"]))
+        starred = st.checkbox("Starred", bool(item["starred"]))
         if st.form_submit_button("Save changes", type="primary"):
             db.execute(
                 """
-                UPDATE words SET meaning = ?, equivalents = ?, example = ?, notes = ?, is_red_word = ?
+                UPDATE words SET meaning = ?, equivalents = ?, example = ?, notes = ?, starred = ?
                 WHERE id = ?
                 """,
-                (meaning, equivalents, example, notes, int(is_red), selected_id),
+                (meaning, equivalents, example, notes, int(starred), selected_id),
             )
             st.success("Entry updated.")
             st.rerun()
@@ -289,11 +342,53 @@ def export_page():
     st.title("Export Data")
     st.write("Exports include a UTF-8 BOM so Chinese text opens cleanly in Excel.")
     all_words = db.rows("SELECT * FROM words ORDER BY list_name, id")
-    red_words = db.rows(f"SELECT * FROM words WHERE {db.is_red_clause()} ORDER BY list_name, word")
+    difficult_words = db.rows(
+        f"SELECT * FROM words WHERE {db.difficult_clause()} ORDER BY list_name, word"
+    )
     logs = db.rows("SELECT * FROM daily_log ORDER BY date")
     st.download_button("Download all words CSV", csv_bytes(all_words), "gre_vocab_all_words.csv", "text/csv")
-    st.download_button("Download red words CSV", csv_bytes(red_words), "gre_vocab_red_words.csv", "text/csv")
+    st.download_button(
+        "Download difficult words CSV",
+        csv_bytes(difficult_words),
+        "gre_vocab_difficult_words.csv",
+        "text/csv",
+    )
     st.download_button("Download daily study log CSV", csv_bytes(logs), "gre_vocab_daily_log.csv", "text/csv")
+    if db.DB_PATH.exists():
+        st.download_button(
+            "Download complete database backup",
+            db.DB_PATH.read_bytes(),
+            f"gre_vocab_backup_{date.today().isoformat()}.db",
+            "application/octet-stream",
+        )
+
+
+def settings_page():
+    st.title("Study Plan Settings")
+    st.write("The target date guides planning only; it does not change your review history.")
+    with st.form("study_settings"):
+        exam_date = st.date_input(
+            "Target GRE date",
+            value=date.fromisoformat(db.setting("exam_date", "2026-09-15")),
+        )
+        daily_unit_goal = st.number_input(
+            "Normal new-unit goal per day",
+            min_value=0,
+            max_value=5,
+            value=int(db.setting("daily_unit_goal", "1")),
+        )
+        backlog_threshold = st.number_input(
+            "Suggest reducing new words when reviews due exceed",
+            min_value=50,
+            max_value=1000,
+            step=25,
+            value=int(db.setting("backlog_threshold", "250")),
+        )
+        if st.form_submit_button("Save settings", type="primary"):
+            db.save_setting("exam_date", exam_date.isoformat())
+            db.save_setting("daily_unit_goal", daily_unit_goal)
+            db.save_setting("backlog_threshold", backlog_threshold)
+            st.success("Study plan settings saved.")
 
 
 PAGES = {
@@ -301,9 +396,10 @@ PAGES = {
     "Import": import_page,
     "New Words": new_words_page,
     "Review": review_page,
-    "Red Words": red_words_page,
+    "Difficult Words": difficult_words_page,
     "Search & Edit": search_edit_page,
     "Export": export_page,
+    "Settings": settings_page,
 }
 
 with st.sidebar:

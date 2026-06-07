@@ -1,48 +1,56 @@
 from datetime import date, timedelta
 
 
-INTERVALS = {0: 1, 1: 2, 2: 4, 3: 7, 4: 15, 5: 30}
+# Successive-relearning stages. Stages 0-1 are learning, 2-5 are reviewing,
+# and 6-7 are mastered maintenance.
+INTERVALS = {0: 1, 1: 1, 2: 3, 3: 7, 4: 14, 5: 30, 6: 60, 7: 120}
+MAX_STAGE = max(INTERVALS)
 
 
-def interval_for_level(level: int) -> int:
-    return INTERVALS[max(0, min(5, level))]
+def interval_for_stage(stage: int) -> int:
+    return INTERVALS[max(0, min(MAX_STAGE, stage))]
 
 
-def schedule_new_word(current_level: int, rating: str) -> dict:
-    today = date.today()
+def status_for(stage: int, times_studied: int) -> str:
+    if times_studied == 0:
+        return "Unseen"
+    if stage <= 1:
+        return "Learning"
+    if stage <= 5:
+        return "Reviewing"
+    return "Mastered"
+
+
+def _result(stage: int, days: int, wrong: int = 0, correct: bool = False) -> dict:
+    return {
+        "level": max(0, min(MAX_STAGE, stage)),
+        "next_review_date": (date.today() + timedelta(days=days)).isoformat(),
+        "wrong_increment": wrong,
+        "correct": correct,
+    }
+
+
+def schedule_new_word(current_stage: int, rating: str) -> dict:
     if rating == "know":
-        level, days, wrong, red = max(current_level, 2), 4, 0, False
-    elif rating == "vague":
-        level, days, wrong, red = max(current_level, 1), 2, 0, False
-    elif rating == "dont_know":
-        level, days, wrong, red = 0, 1, 1, True
-    else:
-        raise ValueError(f"Unknown new-word rating: {rating}")
-    return {
-        "level": level,
-        "next_review_date": (today + timedelta(days=days)).isoformat(),
-        "wrong_increment": wrong,
-        "mark_red": red,
-    }
+        return _result(max(current_stage, 1), 1, correct=True)
+    if rating == "vague":
+        # A vague/unknown new word remains due today for one active-recall retry.
+        return _result(0, 0)
+    if rating == "dont_know":
+        return _result(0, 0, wrong=1)
+    raise ValueError(f"Unknown new-word rating: {rating}")
 
 
-def schedule_review(current_level: int, rating: str) -> dict:
-    today = date.today()
+def schedule_review(current_stage: int, rating: str) -> dict:
     if rating == "forgot":
-        level, days, wrong, red = max(0, current_level - 1), 1, 1, True
-    elif rating == "vague":
-        level, days, wrong, red = current_level, 2, 0, False
-    elif rating == "remembered":
-        level, wrong, red = min(5, current_level + 1), 0, False
-        days = interval_for_level(level)
-    elif rating == "easy":
-        level, wrong, red = min(5, current_level + 2), 0, False
-        days = interval_for_level(level)
-    else:
-        raise ValueError(f"Unknown review rating: {rating}")
-    return {
-        "level": level,
-        "next_review_date": (today + timedelta(days=days)).isoformat(),
-        "wrong_increment": wrong,
-        "mark_red": red,
-    }
+        return _result(0, 1, wrong=1)
+    if rating == "vague":
+        new_stage = max(0, current_stage - 1)
+        return _result(new_stage, 1)
+    if rating == "remembered":
+        new_stage = min(MAX_STAGE, current_stage + 1)
+        return _result(new_stage, interval_for_stage(new_stage), correct=True)
+    if rating == "easy":
+        new_stage = min(MAX_STAGE, current_stage + 2)
+        return _result(new_stage, interval_for_stage(new_stage), correct=True)
+    raise ValueError(f"Unknown review rating: {rating}")

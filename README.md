@@ -11,10 +11,10 @@ of study records.
 
 - Study unseen words by vocabulary list
 - Review due words with level-based spaced repetition
-- Automatically identify difficult red words
+- Automatically identify difficult words from learning performance
 - Track daily activity and accuracy
 - Search, edit, and delete vocabulary entries
-- Export words, red words, and study logs to CSV
+- Export words, difficult words, study logs, and a complete database backup
 
 ## Install And Run
 
@@ -47,27 +47,41 @@ columns are also supported. The importer additionally accepts `meaning_cn`,
 You can import `data/example_vocab.csv` to try the app. Duplicate English words
 are skipped case-insensitively.
 
-## Spaced Repetition
+## Successive Relearning Schedule
+
+The app combines active recall, immediate feedback, and expanding spaced retrieval.
+New words that are vague or unknown remain due for another same-day recall attempt.
+Only words already studied can appear on the Review page.
 
 New-word ratings:
 
 | Rating | New level | Next review |
 |---|---:|---:|
-| Know | At least 2 | 4 days |
-| Vague | At least 1 | 2 days |
-| Don't Know | 0 | 1 day |
+| Know | At least stage 1 | 1 day |
+| Vague | Stage 0 | Same day |
+| Don't Know | Stage 0 | Same day |
 
 Review ratings:
 
 | Rating | Level change | Next review |
 |---|---:|---:|
-| Forgot | Minus 1, minimum 0 | 1 day |
-| Vague | No change | 2 days |
-| Remembered | Plus 1, maximum 5 | Interval for new level |
-| Easy | Plus 2, maximum 5 | Interval for new level |
+| Forgot | Return to stage 0 | 1 day |
+| Vague | Move back one stage | 1 day |
+| Remembered | Plus 1, maximum 7 | Interval for new stage |
+| Easy | Plus 2, maximum 7 | Interval for new stage |
 
-Intervals by level: level 0 = 1 day, level 1 = 2 days, level 2 = 4 days,
-level 3 = 7 days, level 4 = 15 days, and level 5 = 30 days.
+Intervals by stage: stages 0–1 = 1 day, stage 2 = 3 days, stage 3 = 7 days,
+stage 4 = 14 days, stage 5 = 30 days, stage 6 = 60 days, and stage 7 = 120 days.
+
+Statuses are derived automatically:
+
+- **Unseen:** never studied
+- **Learning:** stages 0–1
+- **Reviewing:** stages 2–5
+- **Mastered:** stages 6–7
+
+Difficult words are detected from repeated mistakes, low review accuracy, or being
+stuck in early learning stages. Users can separately star any important word.
 
 ## Data And Privacy
 
@@ -76,7 +90,11 @@ default. This prevents personal progress and third-party vocabulary datasets fro
 being accidentally published.
 
 To back up your progress privately, copy `data/gre_vocab.db` while the app is
-closed.
+closed, or use **Export → Download complete database backup**.
+
+Database upgrades use additive migrations so existing vocabulary and progress are
+preserved. Future features such as practice-error tracking should use separate
+database tables rather than altering vocabulary history.
 
 ## Publishing Your Own Vocabulary
 
