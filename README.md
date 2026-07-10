@@ -10,6 +10,8 @@ of study records.
 ## Features
 
 - Study unseen words by vocabulary list
+- Work through New Words and Review in 10-word batches that repeat until every
+  word in the batch is marked as known
 - Hear each word with local UK or US browser pronunciation
 - Review due words with level-based spaced repetition
 - Automatically identify difficult words from learning performance

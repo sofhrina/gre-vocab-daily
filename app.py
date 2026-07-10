@@ -127,6 +127,98 @@ def rate_buttons(word_id, kind, ratings):
             st.rerun()
 
 
+def batch_state_key(kind, scope):
+    return f"{kind}_batch_{scope}"
+
+
+def reset_batch(kind, scope):
+    key = batch_state_key(kind, scope)
+    for suffix in ("ids", "done", "current"):
+        st.session_state.pop(f"{key}_{suffix}", None)
+    st.session_state.answer_shown = False
+    st.session_state.pop("answer_word_id", None)
+
+
+def get_batch(kind, scope, query, params):
+    key = batch_state_key(kind, scope)
+    ids_key = f"{key}_ids"
+    done_key = f"{key}_done"
+    current_key = f"{key}_current"
+    if ids_key not in st.session_state:
+        batch = db.rows(query, params)
+        st.session_state[ids_key] = [item["id"] for item in batch]
+        st.session_state[done_key] = []
+        st.session_state[current_key] = st.session_state[ids_key][0] if batch else None
+    ids = st.session_state[ids_key]
+    if not ids:
+        return [], [], None
+    placeholders = ",".join("?" for _ in ids)
+    words = db.rows(f"SELECT * FROM words WHERE id IN ({placeholders}) ORDER BY id", ids)
+    done = st.session_state.get(done_key, [])
+    current = st.session_state.get(current_key)
+    if current not in ids or current in done:
+        pending = [word_id for word_id in ids if word_id not in done]
+        current = pending[0] if pending else None
+        st.session_state[current_key] = current
+    return words, done, current
+
+
+def advance_batch(kind, scope, word_id, is_known):
+    key = batch_state_key(kind, scope)
+    ids_key = f"{key}_ids"
+    done_key = f"{key}_done"
+    current_key = f"{key}_current"
+    ids = st.session_state.get(ids_key, [])
+    done = st.session_state.get(done_key, [])
+    if is_known and word_id not in done:
+        done.append(word_id)
+        st.session_state[done_key] = done
+    pending = [item for item in ids if item not in done]
+    if not pending:
+        st.session_state[current_key] = None
+    elif word_id in pending:
+        index = pending.index(word_id)
+        st.session_state[current_key] = pending[(index + 1) % len(pending)]
+    else:
+        st.session_state[current_key] = pending[0]
+    st.session_state.answer_shown = False
+    st.session_state.pop("answer_word_id", None)
+
+
+def show_batch_overview(words, done, current):
+    total = len(words)
+    completed = len(done)
+    st.progress(completed / total if total else 0)
+    st.caption(f"Current group progress: {completed}/{total} marked as known")
+    labels = []
+    for index, word in enumerate(words, start=1):
+        if word["id"] in done:
+            marker = "OK"
+        elif word["id"] == current:
+            marker = "NOW"
+        else:
+            marker = "..."
+        labels.append(f"{index}. {word['word']} [{marker}]")
+    st.write(" · ".join(labels))
+    with st.expander("Show this group's answer sheet"):
+        for word in words:
+            st.markdown(
+                f"**{word['word']}** {word['phonetic'] or ''}  \n"
+                f"{word['meaning'] or '-'}"
+            )
+            if word["equivalents"]:
+                st.caption(f"Equivalents: {word['equivalents']}")
+
+
+def batch_rating_buttons(word_id, kind, scope, ratings, known_ratings):
+    columns = st.columns(len(ratings))
+    for col, (label, rating) in zip(columns, ratings):
+        if col.button(label, width="stretch", key=f"{kind}_{scope}_{word_id}_{rating}"):
+            db.apply_rating(word_id, kind, rating)
+            advance_batch(kind, scope, word_id, rating in known_ratings)
+            st.rerun()
+
+
 def dashboard_page():
     st.title("GRE Vocab Daily")
     st.caption(f"Today: {date.today().isoformat()}")
@@ -197,6 +289,7 @@ def import_page():
 
 def new_words_page():
     st.title("Study New Words")
+    st.write("Study 10 words at a time. Keep looping inside the group until all 10 are marked as known.")
     names = db.list_names()
     if not names:
         st.info("Import the vocabulary CSV first.")
@@ -207,45 +300,71 @@ def new_words_page():
         (selected,),
     )["count"]
     st.caption(f"{remaining} unseen words remaining in this list")
-    word = db.row(
-        "SELECT * FROM words WHERE list_name = ? AND times_reviewed = 0 ORDER BY id LIMIT 1",
+    scope = selected.replace(" ", "_")
+    words, done, current = get_batch(
+        "new",
+        scope,
+        "SELECT * FROM words WHERE list_name = ? AND times_reviewed = 0 ORDER BY id LIMIT 10",
         (selected,),
     )
-    if not word:
+    if not words:
         st.success("You have studied every new word in this list.")
         return
+    show_batch_overview(words, done, current)
+    if current is None:
+        st.success("This 10-word group is complete.")
+        if st.button("Start next 10-word group", type="primary"):
+            reset_batch("new", scope)
+            st.rerun()
+        return
+    word = next(item for item in words if item["id"] == current)
     if show_word_card(word):
-        rate_buttons(
+        batch_rating_buttons(
             word["id"],
             "new",
+            scope,
             [("Don’t Know", "dont_know"), ("Vague", "vague"), ("Know", "know")],
+            {"know"},
         )
 
 
 def review_page():
     st.title("Review Due Words")
+    st.write("Review 10 due words at a time. Forgotten or vague words stay in the group until you can recall them.")
     today = date.today().isoformat()
     due = db.row(
         "SELECT COUNT(*) count FROM words WHERE times_reviewed > 0 AND next_review_date <= ?",
         (today,),
     )["count"]
     st.caption(f"{due} words due")
-    word = db.row(
+    words, done, current = get_batch(
+        "review",
+        today,
         """
         SELECT * FROM words
         WHERE times_reviewed > 0 AND next_review_date <= ?
-        ORDER BY next_review_date, level, times_wrong DESC, id LIMIT 1
+        ORDER BY next_review_date, level, times_wrong DESC, id LIMIT 10
         """,
         (today,),
     )
-    if not word:
+    if not words:
         st.success("All caught up for today.")
         return
+    show_batch_overview(words, done, current)
+    if current is None:
+        st.success("This 10-word review group is complete.")
+        if st.button("Start next 10-word review group", type="primary"):
+            reset_batch("review", today)
+            st.rerun()
+        return
+    word = next(item for item in words if item["id"] == current)
     if show_word_card(word, include_notes=True):
-        rate_buttons(
+        batch_rating_buttons(
             word["id"],
             "review",
+            today,
             [("Forgot", "forgot"), ("Vague", "vague"), ("Remembered", "remembered"), ("Easy", "easy")],
+            {"remembered", "easy"},
         )
 
 
