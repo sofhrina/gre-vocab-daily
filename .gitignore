@@ -1,7 +1,12 @@
 .venv/
+.venv_*/
 __pycache__/
 *.py[cod]
 .DS_Store
+
+# Local agent/runtime helper symlinks
+.agents/
+.claude/
 
 # Personal vocabulary sources and study progress
 data/*.csv
