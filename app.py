@@ -338,8 +338,8 @@ def search_edit_page():
     status_conditions = {
         "Unseen": "times_reviewed = 0",
         "Learning": "times_reviewed > 0 AND level <= 1",
-        "Reviewing": "times_reviewed > 0 AND level BETWEEN 2 AND 5",
-        "Mastered": "level >= 6",
+        "Reviewing": "times_reviewed > 0 AND level BETWEEN 2 AND 6",
+        "Mastered": "level >= 7",
     }
     if selected_status != "All":
         conditions.append(status_conditions[selected_status])

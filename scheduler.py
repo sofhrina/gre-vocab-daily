@@ -1,9 +1,12 @@
 from datetime import date, timedelta
 
 
-# Successive-relearning stages. Stages 0-1 are learning, 2-5 are reviewing,
-# and 6-7 are mastered maintenance.
-INTERVALS = {0: 1, 1: 1, 2: 3, 3: 7, 4: 14, 5: 30, 6: 60, 7: 120}
+# Successive-relearning stages tuned for vocabulary retention.
+# Flow: same-day active recall for weak new words, then 1, 2, 4, 7, 15,
+# 30, 60, and 120 day reviews. This keeps early reviews dense, where
+# forgetting is fastest, and gradually stretches intervals after successful
+# recall.
+INTERVALS = {0: 1, 1: 1, 2: 2, 3: 4, 4: 7, 5: 15, 6: 30, 7: 60, 8: 120}
 MAX_STAGE = max(INTERVALS)
 
 
@@ -16,7 +19,7 @@ def status_for(stage: int, times_studied: int) -> str:
         return "Unseen"
     if stage <= 1:
         return "Learning"
-    if stage <= 5:
+    if stage <= 6:
         return "Reviewing"
     return "Mastered"
 

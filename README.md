@@ -72,18 +72,19 @@ Review ratings:
 |---|---:|---:|
 | Forgot | Return to stage 0 | 1 day |
 | Vague | Move back one stage | 1 day |
-| Remembered | Plus 1, maximum 7 | Interval for new stage |
-| Easy | Plus 2, maximum 7 | Interval for new stage |
+| Remembered | Plus 1, maximum 8 | Interval for new stage |
+| Easy | Plus 2, maximum 8 | Interval for new stage |
 
-Intervals by stage: stages 0–1 = 1 day, stage 2 = 3 days, stage 3 = 7 days,
-stage 4 = 14 days, stage 5 = 30 days, stage 6 = 60 days, and stage 7 = 120 days.
+Intervals by stage: stages 0–1 = 1 day, stage 2 = 2 days, stage 3 = 4 days,
+stage 4 = 7 days, stage 5 = 15 days, stage 6 = 30 days, stage 7 = 60 days,
+and stage 8 = 120 days.
 
 Statuses are derived automatically:
 
 - **Unseen:** never studied
 - **Learning:** stages 0–1
-- **Reviewing:** stages 2–5
-- **Mastered:** stages 6–7
+- **Reviewing:** stages 2–6
+- **Mastered:** stages 7–8
 
 Difficult words are detected from repeated mistakes, low review accuracy, or being
 stuck in early learning stages. Users can separately star any important word.

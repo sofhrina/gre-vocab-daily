@@ -194,12 +194,12 @@ def dashboard_stats():
         SELECT COUNT(*) total_words,
             SUM(CASE WHEN times_reviewed = 0 THEN 1 ELSE 0 END) unseen_words,
             SUM(CASE WHEN times_reviewed > 0 AND level <= 1 THEN 1 ELSE 0 END) learning_words,
-            SUM(CASE WHEN times_reviewed > 0 AND level BETWEEN 2 AND 5 THEN 1 ELSE 0 END) reviewing_words,
+            SUM(CASE WHEN times_reviewed > 0 AND level BETWEEN 2 AND 6 THEN 1 ELSE 0 END) reviewing_words,
             SUM(CASE WHEN times_reviewed > 0 AND next_review_date <= ? THEN 1 ELSE 0 END) due_today,
             SUM(CASE WHEN times_reviewed > 0 AND next_review_date < ? THEN 1 ELSE 0 END) overdue_words,
             SUM(CASE WHEN {difficult_clause()} THEN 1 ELSE 0 END) difficult_words,
             SUM(CASE WHEN starred = 1 THEN 1 ELSE 0 END) starred_words,
-            SUM(CASE WHEN level >= 6 THEN 1 ELSE 0 END) mastered_words
+            SUM(CASE WHEN level >= 7 THEN 1 ELSE 0 END) mastered_words
         FROM words
         """,
         (today, today),
@@ -213,7 +213,7 @@ def progress_by_list():
         """
         SELECT list_name, COUNT(*) total_words,
             SUM(CASE WHEN times_reviewed > 0 THEN 1 ELSE 0 END) studied_words,
-            SUM(CASE WHEN level >= 6 THEN 1 ELSE 0 END) mastered_words,
+            SUM(CASE WHEN level >= 7 THEN 1 ELSE 0 END) mastered_words,
             ROUND(100.0 * SUM(CASE WHEN times_reviewed > 0 THEN 1 ELSE 0 END) / COUNT(*), 1) progress_pct
         FROM words GROUP BY list_name ORDER BY list_name
         """
